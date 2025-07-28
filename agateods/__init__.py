@@ -1,1 +1,1 @@
-import agateods.agate_ods
+import agateods.table_ods
