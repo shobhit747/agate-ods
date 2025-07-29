@@ -38,7 +38,6 @@ def read_ods_content_file(ods_file_path : str):
         return content_file
 
 def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=None, **kwargs):
-
     if not isinstance(skip_lines, int):
         raise ValueError('skip_lines argument must be an int')
 
@@ -71,6 +70,7 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
         sheet_to_operate_on = sheets[0]
     
     rows = list()
+    first_row = True
     for table_row in sheet_to_operate_on.iter(table_row_tag):
         row = list()
 
@@ -83,6 +83,13 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
         if len(row) == 0:
             continue        #remove empty row
 
+        if (skip_lines is not None and skip_lines > 0):
+            if header and first_row:
+               first_row = False
+            else: 
+                skip_lines = skip_lines - 1
+                continue
+            
         rows.append(row)
 
     column_types = list()
