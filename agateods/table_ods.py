@@ -38,6 +38,21 @@ def read_ods_content_file(ods_file_path : str):
         return content_file
 
 def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=None, **kwargs):
+    """
+    Parse an ODS file.
+
+    :param path:
+        Path to an ODS file to load.
+    :param sheet:
+        The name or integer indice of the worksheet to load. If not specified
+        then the first sheet will be used.
+    :param skip_lines:
+        The number of rows to skip from the top of the sheet.
+    :param header:
+        If :code:`True`, the first row is assumed to contain column names.
+    :param row_limit:
+        Limit how many rows of data will be read.
+    """
     if not isinstance(skip_lines, int):
         raise ValueError('skip_lines argument must be an int')
 
@@ -71,7 +86,7 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
     
     rows = list()
     first_row = True
-    for table_row in sheet_to_operate_on.iter(table_row_tag):
+    for table_row in sheet_to_operate_on.iter(table_row_tag):   #iterate through rows of the table
         row = list()
 
         for data_cell in table_row.iter(cell_tag):
@@ -82,14 +97,25 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
             row.pop(-1)     #remove row padding
         if len(row) == 0:
             continue        #remove empty row
+        
+        if row_limit is not None and skip_lines <= 0:
+            if row_limit > 0:
+                if not first_row or not header :
+                    row_limit = row_limit - 1
+            else:
+                break
 
-        if (skip_lines is not None and skip_lines > 0):
-            if header and first_row:
-               first_row = False
-            else: 
+        if skip_lines is not None and skip_lines > 0:
+            if header and not first_row:
                 skip_lines = skip_lines - 1
                 continue
-            
+            elif not header:
+                skip_lines = skip_lines - 1
+                continue
+
+        if first_row:
+            first_row = False
+
         rows.append(row)
 
     column_types = list()
@@ -98,13 +124,13 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
 
     if header is True:
         columns = rows[0]   #creating a column row for agate
+        rows.pop(0)         #removing extra column row from data
     else:
         if 'column_names' in kwargs.keys():
             columns = kwargs.get('column_names')
         else:
             raise ValueError('column_names argument must be provided if header is set to be False')
     
-    rows.pop(0)         #removing extra column row from data
     table = agate.Table(rows=rows,column_names=columns)
     return table
 
