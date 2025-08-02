@@ -8,9 +8,20 @@ import zipfile
 import lxml.etree as etree
 import xml.etree.ElementTree as ET
 import io
-import logging
+import re
+from collections import OrderedDict
 
 ODS_CONTENT_FILE = 'content.xml'
+
+ODS_TYPE_TO_AGATE = {
+    'string':agate.Text(),
+    'float':agate.Number(),
+    'currency':agate.Number(),
+    'date':agate.DateTime(),
+    'time':agate.DateTime(),
+    'boolean':agate.Boolean(),
+    'percentage':agate.Number()
+}
 
 class UnsupportedFileExtensionError(Exception):
     """Raised when the file has an unsupported extension."""
@@ -36,6 +47,38 @@ def read_ods_content_file(ods_file_path : str):
     if ODS_CONTENT_FILE in ods_file_zip.namelist():
         content_file = ods_file_zip.open(ODS_CONTENT_FILE)
         return content_file
+
+def resolve_data_value(data_cell,ns):
+    """
+    Convert an ODS worksheet cell value to its appropriate Agate data type.
+    """
+
+    p_tag = '{%s}p' % ns['text']
+    value_type_attr = '{%s}value-type' % ns['office']
+    office_namespace = ns['office']
+    resolve_value_attr = {
+        'float': '{%s}value' % office_namespace,
+        'percentage': '{%s}value' % office_namespace,
+        'currency': '{%s}currency' % office_namespace,
+        'date': '{%s}date-value' % office_namespace,
+        'time': '{%s}time-value' % office_namespace,
+        'boolean': '{%s}boolean-value' % office_namespace
+    }
+
+    def resolve_string_to_number(value):
+        return re.sub(r"[^\d.]+", "", value)
+
+    cell_data_type = data_cell.attrib.get(value_type_attr)
+    if  cell_data_type == 'string':
+        data_value = data_cell.findtext(p_tag) if data_cell.findtext(p_tag) is not None else ''
+    elif cell_data_type == 'currency':
+        data_value = resolve_string_to_number(
+            data_cell.findtext(p_tag) if data_cell.findtext(p_tag) is not None else ''
+            )
+    else:
+        data_value = data_cell.attrib.get(resolve_value_attr[cell_data_type])
+
+    return data_value
 
 def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=None, **kwargs):
     """
@@ -65,6 +108,10 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
     table_row_tag = '{%s}table-row' % ns['table']
     cell_tag = '{%s}table-cell' % ns['table']
     p_tag = '{%s}p' % ns['text']
+    
+    value_type_attr = '{%s}value-type' % ns['office']
+    value_attr = '{%s}value' % ns['office']
+    padding_attr = '{%s}number-columns-repeated' % ns['table']
 
     sheetnames = list()
     for table in root.iter(table_tag):
@@ -86,15 +133,27 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
     
     rows = list()
     first_row = True
+    column_types = list()
+    calculated_column_types = dict()
     for table_row in sheet_to_operate_on.iter(table_row_tag):   #iterate through rows of the table
         row = list()
-
+        
+        column_number = 0
         for data_cell in table_row.iter(cell_tag):
-            text = data_cell.findtext(p_tag) if data_cell.findtext(p_tag) is not None else ''
-            row.append(text)
+            cell_data_type = data_cell.attrib.get(value_type_attr)
+            if padding_attr not in data_cell.attrib.keys(): #remove row padding
+                data_value = resolve_data_value(data_cell,ns)
+                row.append(data_value)
 
-        if row[-1] == '':
-            row.pop(-1)     #remove row padding
+                if header and first_row:
+                    continue
+                if column_number not in calculated_column_types.keys():
+                    calculated_column_types[column_number] = cell_data_type
+                else:
+                    if calculated_column_types[column_number] != cell_data_type:
+                        raise TypeError(f"Type mismatch at row {len(rows)} column {column_number}")
+                column_number = column_number + 1
+                
         if len(row) == 0:
             continue        #remove empty row
         
@@ -121,6 +180,10 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
     column_types = list()
     if 'column_types' in kwargs.keys():
         column_types = kwargs.get('column_types')
+    else:
+        calculated_column_types = OrderedDict(sorted(calculated_column_types.items()))
+        data_types = calculated_column_types.values()
+        column_types = [ODS_TYPE_TO_AGATE[data_type] for data_type in data_types]
 
     if header is True:
         columns = rows[0]   #creating a column row for agate
