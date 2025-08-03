@@ -111,7 +111,7 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
     
     value_type_attr = '{%s}value-type' % ns['office']
     value_attr = '{%s}value' % ns['office']
-    padding_attr = '{%s}number-columns-repeated' % ns['table']
+    columns_repeated_attr = '{%s}number-columns-repeated' % ns['table']
 
     sheetnames = list()
     for table in root.iter(table_tag):
@@ -141,19 +141,32 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
         column_number = 0
         for data_cell in table_row.iter(cell_tag):
             cell_data_type = data_cell.attrib.get(value_type_attr)
-            if padding_attr not in data_cell.attrib.keys(): #remove row padding
+            if len(data_cell.attrib.keys()) == 0: #handle empty cell
+                column_number = column_number + 1
+                row.append('')
+                continue
+            if value_type_attr in data_cell.attrib.keys(): #remove row padding
                 data_value = resolve_data_value(data_cell,ns)
-                row.append(data_value)
+                
+                if columns_repeated_attr in data_cell.attrib.keys(): #handle repeated data cell
+                    repeated = int(data_cell.attrib.get(columns_repeated_attr))
+                else:
+                    repeated = 1
+
+                for index in range(repeated):
+                    row.append(data_value)
 
                 if header and first_row:
                     continue
-                if column_number not in calculated_column_types.keys():
-                    calculated_column_types[column_number] = cell_data_type
-                else:
-                    if calculated_column_types[column_number] != cell_data_type:
-                        raise TypeError(f"Type mismatch at row {len(rows)} column {column_number}")
-                column_number = column_number + 1
                 
+                for i in range(repeated):
+                    if column_number not in calculated_column_types.keys():
+                        calculated_column_types[column_number] = cell_data_type
+                    else:
+                        if calculated_column_types[column_number] != cell_data_type:
+                            raise TypeError(f"Type mismatch at row {len(rows)+1} column {column_number+1}")
+                    column_number = column_number + 1
+        
         if len(row) == 0:
             continue        #remove empty row
         
@@ -194,7 +207,7 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
         else:
             raise ValueError('column_names argument must be provided if header is set to be False')
     
-    table = agate.Table(rows=rows,column_names=columns)
+    table = agate.Table(rows=rows,column_names=columns,column_types=column_types)
     return table
 
 agate.Table.from_ods = classmethod(from_ods)
