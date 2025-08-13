@@ -125,93 +125,107 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
     table_row_tag = '{%s}table-row' % ns['table']
     table_column_tag = '{%s}table-column' % ns['table']
     cell_tag = '{%s}table-cell' % ns['table']
+    sheet_name_attrib = '{%s}name' % ns['table']
 
     sheetnames = list()
     for table in root.iter(table_tag):
         sheetnames.append(table.attrib['{%s}name' % ns['table']])
     sheets = [sheets for sheets in root.iter(table_tag)]
 
+    sheet_to_operate_on_list = []
     if sheet is not None:
         if isinstance(sheet, int):
-            sheet_to_operate_on = sheets[sheet]
+            sheet_to_operate_on_list.append(sheets[sheet])
         elif isinstance(sheet,str):
             if sheet in sheetnames:
-                sheet_to_operate_on = sheets[sheetnames.index(sheet)]
+                sheet_to_operate_on_list.append(sheets[sheetnames.index(sheet)])
             else:
                 raise ValueError(f"No sheet with name '{sheet}'")
+        elif isinstance(sheet,list):
+            for sheet_ in sheet:
+                if isinstance(sheet_, int):
+                    sheet_to_operate_on_list.append(sheets[sheet_])
+                elif isinstance(sheet_,str):
+                    if sheet_ in sheetnames:
+                        sheet_to_operate_on_list.append(sheets[sheetnames.index(sheet_)]) 
+                    else:
+                        raise ValueError(f"No sheet with name '{sheet}'")
         else:
             raise ValueError("sheet argument must be an int or string")
     else:
-        sheet_to_operate_on = sheets[0]
+        sheet_to_operate_on_list.append(sheets[0])
     
-    rows = list()
-    first_row = True if header else False
-    number_of_columns = 0
-    for table_column in sheet_to_operate_on.iter(table_column_tag):
-        number_of_columns = number_of_columns + 1
+    tables = dict()
+    for sheet_to_operate_on in sheet_to_operate_on_list:
+        rows = list()
+        first_row = True if header else False
+        number_of_columns = 0
+        for table_column in sheet_to_operate_on.iter(table_column_tag):
+            number_of_columns = number_of_columns + 1
 
-    for table_row in sheet_to_operate_on.iter(table_row_tag):   #iterate through rows of the table
-        unresolved_row = list()
-        row = list()
-        for data_cell in table_row.iter(cell_tag):
-            data_value = resolve_data_value(data_cell,ns)
-            unresolved_row.append(data_value)
+        for table_row in sheet_to_operate_on.iter(table_row_tag):   #iterate through rows of the table
+            unresolved_row = list()
+            row = list()
+            for data_cell in table_row.iter(cell_tag):
+                data_value = resolve_data_value(data_cell,ns)
+                unresolved_row.append(data_value)
+                
+            unresolved_row.pop()
+            for data in unresolved_row:
+                if type(data) is list:
+                    repeated_data = data[0]
+                    repeated = int(data[1])
+                    for _ in range(repeated):
+                        row.append(repeated_data)
+                else:
+                    row.append(data)
+
+            if len(row) == 0:
+                continue        #remove empty row
             
-        unresolved_row.pop()
-        for data in unresolved_row:
-            if type(data) is list:
-                repeated_data = data[0]
-                repeated = int(data[1])
-                for _ in range(repeated):
-                    row.append(repeated_data)
-            else:
-                row.append(data)
+            if row_limit is not None and skip_lines <= 0:
+                if row_limit > 0:
+                    if not first_row or not header :
+                        row_limit = row_limit - 1
+                else:
+                    break
 
-        if len(row) == 0:
-            continue        #remove empty row
-        
-        if row_limit is not None and skip_lines <= 0:
-            if row_limit > 0:
-                if not first_row or not header :
-                    row_limit = row_limit - 1
-            else:
-                break
+            if skip_lines is not None and skip_lines > 0:
+                if header and not first_row:
+                    skip_lines = skip_lines - 1
+                    continue
+                elif not header:
+                    skip_lines = skip_lines - 1
+                    continue
 
-        if skip_lines is not None and skip_lines > 0:
-            if header and not first_row:
-                skip_lines = skip_lines - 1
-                continue
-            elif not header:
-                skip_lines = skip_lines - 1
-                continue
+            if first_row:
+                first_row = False
+            rows.append(row)
 
-        if first_row:
-            first_row = False
-        rows.append(row)
-
-    if header is True:
-        columns = rows[0]   #creating a column row for agate
-        rows.pop(0)         #removing extra column row from data
-    else:
-        if 'column_names' in kwargs.keys():
-            columns = kwargs.get('column_names')
+        if header is True:
+            columns = rows[0]   #creating a column row for agate
+            rows.pop(0)         #removing extra column row from data
         else:
-            columns = list()
-            while len(columns) <= number_of_columns:
-                i = len(columns)
-                name = ""
-                while True:
-                    name = chr(65 + (i % 26)) + name
-                    i = i // 26 - 1
-                    if i < 0:
-                        break
-                columns.append(name)
-    
-    if 'column_types' in kwargs.keys():
-        table = agate.Table(rows=rows,column_names=columns,column_types=kwargs['column_types'])
-        return table
-    
-    table = agate.Table(rows=rows,column_names=columns)
-    return table
+            if 'column_names' in kwargs.keys():
+                columns = kwargs.get('column_names')
+            else:
+                columns = list()
+                while len(columns) <= number_of_columns:
+                    i = len(columns)
+                    name = ""
+                    while True:
+                        name = chr(65 + (i % 26)) + name
+                        i = i // 26 - 1
+                        if i < 0:
+                            break
+                    columns.append(name)
+        
+        if 'column_types' in kwargs.keys():
+            table = agate.Table(rows=rows,column_names=columns,column_types=kwargs['column_types'])
+            return table
+        
+        table = agate.Table(rows=rows,column_names=columns)
+        tables[sheet_to_operate_on.attrib[sheet_name_attrib]] = table
+    return tables[list(tables.keys())[0]] if len(tables.keys()) == 1 else tables
 
 agate.Table.from_ods = classmethod(from_ods)
