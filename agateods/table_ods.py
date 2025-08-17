@@ -8,7 +8,6 @@ import zipfile
 import lxml.etree as etree
 import xml.etree.ElementTree as ET
 import re
-import pathlib
 from isodate import parse_duration
 
 ODS_CONTENT_FILE = 'content.xml'
@@ -39,7 +38,6 @@ def read_ods_content_file(ods_file_path : str):
     """
     Opens the .ods file and returns 
     """
-    ods_file_path = pathlib.Path(ods_file_path).absolute()
     extension = str(ods_file_path).split('.')[-1]
     if not zipfile.is_zipfile(ods_file_path) and extension != 'ods':
         raise UnsupportedFileExtensionError(f'Failed to read {ods_file_path} as an ODS file.')
@@ -126,6 +124,7 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
     table_column_tag = '{%s}table-column' % ns['table']
     cell_tag = '{%s}table-cell' % ns['table']
     sheet_name_attrib = '{%s}name' % ns['table']
+    padding_attrib = '{%s}number-columns-repeated' % ns['table']
 
     sheetnames = list()
     for table in root.iter(table_tag):
@@ -159,19 +158,25 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
     for sheet_to_operate_on in sheet_to_operate_on_list:
         rows = list()
         first_row = True if header else False
-        number_of_columns = 0
+        padding = 0
         for table_column in sheet_to_operate_on.iter(table_column_tag):
-            number_of_columns = number_of_columns + 1
+            if padding_attrib in table_column.attrib.keys():
+                padding = table_column.attrib[padding_attrib]
 
+        number_of_columns = 0
         for table_row in sheet_to_operate_on.iter(table_row_tag):   #iterate through rows of the table
             unresolved_row = list()
             row = list()
             for data_cell in table_row.iter(cell_tag):
                 data_value = resolve_data_value(data_cell,ns)
                 unresolved_row.append(data_value)
-                
-            unresolved_row.pop()
+
+
+            if isinstance(unresolved_row[-1],list) and '' in unresolved_row[-1]:
+                unresolved_row.pop()
             for data in unresolved_row:
+                number_of_columns = (len(unresolved_row) if number_of_columns < len(unresolved_row) 
+                                     else number_of_columns)
                 if type(data) is list:
                     repeated_data = data[0]
                     repeated = int(data[1])
@@ -180,9 +185,9 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
                 else:
                     row.append(data)
 
-            if len(row) == 0:
+            if len(row) == 0 or all(ele == '' for ele in row):
                 continue        #remove empty row
-            
+
             if row_limit is not None and skip_lines <= 0:
                 if row_limit > 0:
                     if not first_row or not header :
@@ -202,23 +207,24 @@ def from_ods(cls,file_path, sheet=None, skip_lines=0, header=True, row_limit=Non
                 first_row = False
             rows.append(row)
 
-        if header is True:
-            columns = rows[0]   #creating a column row for agate
+        columns = list()
+        if header is True and rows != []:
+            columns = [str(name) for name in rows[0]]   #creating a column row for agate
             rows.pop(0)         #removing extra column row from data
-        else:
+        if header is False or len(columns) < number_of_columns:
             if 'column_names' in kwargs.keys():
                 columns = kwargs.get('column_names')
             else:
-                columns = list()
-                while len(columns) <= number_of_columns:
-                    i = len(columns)
-                    name = ""
-                    while True:
-                        name = chr(65 + (i % 26)) + name
-                        i = i // 26 - 1
-                        if i < 0:
-                            break
-                    columns.append(name)
+                if rows != []: #to handle empty spreadsheet
+                    while len(columns) < len(rows[0]):
+                        i = len(columns)
+                        name = ""
+                        while True:
+                            name = chr(65 + (i % 26)) + name
+                            i = i // 26 - 1
+                            if i < 0:
+                                break
+                        columns.append(name)
         
         if 'column_types' in kwargs.keys():
             table = agate.Table(rows=rows,column_names=columns,column_types=kwargs['column_types'])

@@ -9,6 +9,7 @@ setup(
     license='MIT',
     install_requires=[
         'agate>=1.5.0',
-        'lxml==6.0.0'
+        'lxml==6.0.0',
+        'isodate==0.7.2'
     ],
 )
